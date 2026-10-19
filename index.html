@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PaddleOCR 识别准确率测试台 - 审计专用</title>
+<style>
+  /* ============================== 全局基础 ============================== */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f3f5f9;
+    color: #22262c;
+    line-height: 1.6;
+  }
+
+  /* ============================== 顶部栏 ============================== */
+  header {
+    background: linear-gradient(90deg, #1f4e8c 0%, #1f6feb 60%, #3b82f6 100%);
+    color: #fff;
+    padding: 18px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    box-shadow: 0 2px 10px rgba(15, 40, 90, .25);
+  }
+  header h1 { font-size: 22px; font-weight: 700; letter-spacing: 1px; }
+  header .sub { font-size: 12px; opacity: .9; margin-top: 2px; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.35);
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    user-select: none; transition: background .15s;
+  }
+  .status-pill:hover { background: rgba(255,255,255,.26); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #9aa3af; flex: none; }
+  .dot.ok { background: #5bd97a; box-shadow: 0 0 6px #5bd97a; }
+  .dot.err { background: #ff6b6b; box-shadow: 0 0 6px #ff6b6b; }
+  .dot.na { background: #ffd166; }
+  .status-pill .hint { font-size: 11px; opacity: .85; }
+
+  /* ============================== 主体布局 ============================== */
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 20px;
+    max-width: 1440px;
+    margin: 22px auto;
+    padding: 0 24px;
+  }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+
+  .card {
+    background: #fff; border-radius: 12px;
+    box-shadow: 0 1px 4px rgba(20,40,80,.08);
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .card-head {
+    padding: 12px 18px; border-bottom: 1px solid #edf0f5;
+    font-weight: 700; font-size: 15px; display: flex;
+    align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  }
+  .card-head .tag { font-weight: 500; font-size: 12px; color: #6b7280; }
+  .card-body { padding: 18px; }
+
+  /* ============================== 上传区 ============================== */
+  .dropzone {
+    border: 2px dashed #b9c4d4; border-radius: 10px;
+    min-height: 170px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 8px;
+    text-align: center; cursor: pointer; color: #5b6472;
+    background: #fafbfe; transition: all .15s; padding: 16px;
+    position: relative; user-select: none;
+  }
+  .dropzone.drag { border-color: #1f6feb; background: #eaf2ff; color: #1f6feb; }
+  .dropzone .big { font-size: 40px; line-height: 1; }
+  .dropzone .tip { font-size: 13px; }
+  .dropzone .tip b { color: #1f6feb; }
+  .dropzone.has-image { min-height: 120px; }
+  .preview-wrap { display: none; width: 100%; }
+  .dropzone.has-image .preview-wrap { display: block; }
+  .dropzone.has-image .drop-hint { display: none; }
+  .preview-wrap img {
+    max-width: 100%; max-height: 300px; border-radius: 8px;
+    border: 1px solid #e3e8f0; display: block; margin: 0 auto;
+    background: #fff;
+  }
+  .file-meta { font-size: 12px; color: #6b7280; margin-top: 6px; text-align: center; }
+  .dz-actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+
+  /* ============================== 按钮 ============================== */
+  .btn {
+    border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px;
+    cursor: pointer; font-weight: 600; transition: all .12s; display: inline-flex;
+    align-items: center; gap: 6px; background: #eef1f6; color: #333;
+  }
+  .btn:hover { filter: brightness(.96); }
+  .btn:disabled { opacity: .55; cursor: not-allowed; }
+  .btn.primary { background: #1f6feb; color: #fff; }
+  .btn.danger  { background: #ffe9e9; color: #c32727; }
+  .btn.ghost   { background: transparent; color: #1f6feb; box-shadow: inset 0 0 0 1px #c9d7ee; }
+  .btn.small   { padding: 5px 10px; font-size: 12px; }
+
+  /* ============================== 画板 ============================== */
+  .canvas-wrap { position: relative; border: 1px solid #dbe2ec; border-radius: 8px; background: #fff; }
+  .canvas-wrap.disabled { opacity: .55; pointer-events: none; }
+  #pad {
+    display: block; width: 100%; height: auto; max-height: 420px;
+    touch-action: none; cursor: crosshair; border-radius: 8px;
+    background: #fff;
+  }
+  .pad-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .pad-toolbar .sep { flex: 1; }
+  .pad-hint { font-size: 12px; color: #7a828e; margin-top: 10px; }
+  .pad-hint .hl { color: #d6336c; font-weight: 700; }
+
+  /* 易混淆字参考 chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    background: #eef3ff; color: #1f4e8c; border: 1px solid #d5e2fb;
+  }
+  .chip.warn { background: #fff4e5; color: #b26a00; border-color: #ffe0b0; }
+
+  /* ============================== 结果区 ============================== */
+  #results { max-height: 62vh; overflow-y: auto; padding: 6px 18px 18px; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; padding: 14px 18px; }
+  @media (max-width: 1300px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+  .stat { background: #f7f9fc; border: 1px solid #e8edf5; border-radius: 8px; padding: 8px 12px; }
+  .stat .k { font-size: 11px; color: #8a93a0; }
+  .stat .v { font-size: 17px; font-weight: 700; color: #1f4e8c; margin-top: 1px; }
+
+  .empty { color: #98a1ad; text-align: center; padding: 48px 10px; font-size: 14px; }
+  .empty .big { font-size: 42px; opacity: .5; }
+
+  .item {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 12px; border: 1px solid #e8edf5; border-radius: 8px;
+    margin-bottom: 8px; background: #fff; position: relative;
+  }
+  .item .idx {
+    flex: none; width: 26px; height: 26px; border-radius: 6px;
+    background: #eef3ff; color: #1f4e8c; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .item .txt { flex: 1; font-size: 15px; word-break: break-all; white-space: pre-wrap; }
+  .item .meta { font-size: 11px; color: #98a1ad; margin-top: 2px; }
+  .item .copy-btn { flex: none; }
+  .score {
+    flex: none; min-width: 46px; text-align: center; font-size: 12px; font-weight: 700;
+    border-radius: 6px; padding: 3px 7px; color: #fff;
+  }
+  .score.good  { background: #2f9e63; }
+  .score.warn  { background: #e6a23c; }
+  .score.danger{ background: #e03131; }
+  .item.danger { border-color: #ffc9c9; background: #fff7f7; }
+  .item.warn   { border-color: #ffe3b3; background: #fffdf7; }
+
+  .alert {
+    margin: 6px 18px 14px; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+  }
+  .alert.warn { background: #fff4e5; border: 1px solid #ffddb0; color: #8a4b00; }
+  .alert.info { background: #eaf2ff; border: 1px solid #cfe0ff; color: #1f4e8c; }
+
+  .error-banner {
+    display: none; margin: 10px 18px; padding: 12px 14px;
+    background: #ffe9e9; border: 1px solid #ffc2c2; color: #b91c1c;
+    border-radius: 8px; font-size: 13px; white-space: pre-wrap;
+  }
+  .error-banner.show { display: block; }
+
+  .center { text-align: center; }
+  .muted { color: #7a828e; }
+
+  button.loading::after {
+    content: ""; width: 12px; height: 12px; margin-left: 8px;
+    border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+    border-radius: 50%; animation: spin .7s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer { text-align: center; color: #98a1ad; font-size: 12px; padding: 0 24px 30px; }
+  .kbd {
+    background: #eef1f6; border: 1px solid #d9dee8; border-bottom-width: 2px;
+    border-radius: 5px; padding: 0 5px; font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================== 顶部 ============================== -->
+<header>
+  <div>
+    <h1>🖥 PaddleOCR 识别准确率测试台</h1>
+    <div class="sub">本地离线 · 中文高精度模式（lang=ch / 角度校正）· 面向财务审计形近字复核</div>
+  </div>
+  <div class="status-pill" id="statusPill" title="点击重新探测后端">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">正在探测后端…</span>
+    <span class="hint">（点击重试）</span>
+  </div>
+</header>
+
+<main>
+  <!-- ============================== 左列：上传 + 画板 ============================== -->
+  <section>
+    <!-- 上传图片 -->
+    <div class="card">
+      <div class="card-head">
+        ① 上传图片文件
+        <span class="tag">支持 JPG / PNG / BMP / WEBP，<b>最大 20MB</b>，选择后自动识别</span>
+      </div>
+      <div class="card-body">
+        <div class="dropzone" id="dropzone">
+          <div class="big">📁</div>
+          <div class="tip">拖拽图片到此处，或 <b>点击选择文件</b></div>
+          <div class="tip muted">适合：发票扫描件、快递单照片、PDF 转出的图片</div>
+          <div class="preview-wrap">
+            <img id="previewImg" alt="预览">
+            <div class="file-meta" id="fileMeta"></div>
+            <div class="dz-actions">
+              <button class="btn" id="btnRechoose">↺ 重新选择</button>
+              <button class="btn danger" id="btnRemoveImg">✕ 移除</button>
+            </div>
+          </div>
+          <input type="file" id="fileInput" accept="image/*" hidden>
+        </div>
+      </div>
+    </div>
+
+    <!-- 手写画板 -->
+    <div class="card">
+      <div class="card-head">
+        ② 手写识别（Canvas 画板）
+        <span class="tag">鼠标 / 手指 / 触控笔 均可书写</span>
+      </div>
+      <div class="card-body">
+        <div class="canvas-wrap" id="canvasWrap">
+          <canvas id="pad" width="960" height="600"></canvas>
+          <!-- 宽高在 JS 里按设备像素比进一步修正，这里的 960x600 是逻辑尺寸的 1.5 倍基准 -->
+        </div>
+        <div class="pad-toolbar">
+          <button class="btn primary" id="btnSubmitPad">识别画板文字</button>
+          <button class="btn danger" id="btnClearPad">清空画板</button>
+          <span class="sep"></span>
+          <span class="muted" style="font-size:12px">已落笔 <b id="strokeCount">0</b> 笔</span>
+        </div>
+        <div class="pad-hint">
+          建议<code>一笔一画、字距适中</code>地书写，天然的连笔字、形近字可放心测试——这是本页的核心目的。
+          <span class="hl">推荐先写：</span>
+        </div>
+        <div class="chips" id="samples"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== 右列：结果 ============================== -->
+  <section class="card" style="align-self:start; position: sticky; top: 16px;">
+    <div class="card-head">
+      ③ 识别结果
+      <span class="tag" id="engineTag">—</span>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat"><div class="k">识别行数</div><div class="v" id="statCount">0</div></div>
+      <div class="stat"><div class="k">平均置信度</div><div class="v" id="statAvg">—</div></div>
+      <div class="stat"><div class="k">耗时(ms)</div><div class="v" id="statTime">—</div></div>
+      <div class="stat"><div class="k">低置信行</div><div class="v" id="statLow" style="color:#d6336c">0</div></div>
+    </div>
+
+    <div class="alert info" id="alertHint">
+      💡 请先从左侧上传图片或手写文字，识别结果会在下方按行展示<b>文本内容</b>与<b>置信度</b>。
+      置信度 <b>低于 0.75</b> 的行会被标红，提示<b>人工复核</b>（审计合规要求）。
+    </div>
+
+    <div class="alert warn" id="alertLow" style="display:none"></div>
+    <div class="error-banner" id="errorBanner"></div>
+
+    <div style="display:flex; gap:8px; justify-content:flex-end; padding:0 18px;">
+      <button class="btn small" id="btnCopyAll">📋 复制全部文本</button>
+      <button class="btn small danger" id="btnClearResults">清空结果</button>
+    </div>
+
+    <div id="results">
+      <div class="empty" id="emptyBox">
+        <div class="big">🫥</div>
+        暂无识别结果
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  使用说明：先启动后端 <span class="kbd">python app.py</span>（默认 8000 端口），再双击本文件即可使用。
+  若后端端口不同，请修改本文件顶部 <span class="kbd">API_BASE</span> 常量后刷新。
+  PaddleOCR 首次运行会自动加载模型；断网机器请先用 <span class="kbd">python app.py --warmup</span> 预下载模型。
+</footer>
+
+<script>
+"use strict";
+
+/* ============================== 全局配置 ============================== */
+// 后端地址：file:// 协议下默认请求本机 8000 端口；若改成静态服务器托管，则自动走同源
+const API_BASE = (location.protocol === "file:" || location.protocol === "http:")
+  ? "http://127.0.0.1:8000"
+  : "";
+const MAX_SIZE = 20 * 1024 * 1024;   // 与后端一致：20MB
+
+/* 低置信度阈值：低于此值的识别结果标红提示人工复核 */
+const LOW_SCORE = 0.75;
+
+/* ============================== DOM 引用 ============================== */
+const $ = (id) => document.getElementById(id);
+const dropzone        = $("dropzone");
+const fileInput       = $("fileInput");
+const previewImg      = $("previewImg");
+const fileMeta        = $("fileMeta");
+const canvasEl        = $("pad");
+const canvasWrap      = $("canvasWrap");
+const strokeCountEl   = $("strokeCount");
+const resultsEl       = $("results");
+const emptyBox        = $("emptyBox");
+const errorBanner     = $("errorBanner");
+const engineTag       = $("engineTag");
+const statCount       = $("statCount");
+const statAvg         = $("statAvg");
+const statTime        = $("statTime");
+const statLow         = $("statLow");
+const alertLow        = $("alertLow");
+const samplesEl       = $("samples");
+
+/* ============================== 后端状态探测 ============================== */
+async function checkHealth() {
+  const dot = $("statusDot"), txt = $("statusText");
+  dot.className = "dot na"; txt.textContent = "正在探测后端…";
+  try {
+    const res = await fetch(`${API_BASE}/api/health`);
+    const data = await res.json();
+    if (data.status === "ok") {
+      dot.className = "dot ok";
+      txt.textContent = `后端在线 · ${data.engine}`;
+    } else {
+      dot.className = "dot na";
+      txt.textContent = `后端在线但引擎${data.engine}`;
+    }
+  } catch (e) {
+    dot.className = "dot err";
+    txt.textContent = "后端未连接";
+    showError(`无法连接后端 ${API_BASE}\n请先在终端运行：python app.py，然后点击右上角状态重新探测。`);
+  }
+}
+$("statusPill").addEventListener("click", checkHealth);
+checkHealth();
+
+/* ============================== 通用：错误与提示 ============================== */
+function showError(msg) {
+  errorBanner.textContent = msg;
+  errorBanner.classList.add("show");
+}
+function hideError() { errorBanner.classList.remove("show"); }
+
+function setLoading(btn, loading, text) {
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.classList.toggle("loading", loading);
+  if (text) btn.dataset.text = text;
+}
+function normalizeButtons(active) {
+  $("btnSubmitPad").disabled = !active;
+}
+
+/* ============================== 解析后端响应 ============================== */
+async function readResponse(res) {
+  // 即使 HTTP 状态码是 4xx/5xx，后端也会返回 {success: false, detail: "..."} 的 JSON
+  let payload = null;
+  try { payload = await res.json(); } catch (_) { payload = null; }
+
+  if (!res.ok || !payload || payload.success === false) {
+    const detail = (payload && payload.detail) || `HTTP ${res.status} ${res.statusText}`;
+    throw new Error(detail);
+  }
+  return payload;
+}
+
+/* ============================== 结果渲染 ============================== */
+function scoreClass(s) {
+  if (s == null) return "warn";               // 缺失分数按黄色警示处理
+  if (s >= 0.9)  return "good";
+  if (s >= LOW_SCORE) return "warn";
+  return "danger";
+}
+function scoreLabel(s) { return s == null ? "—" : (s * 100).toFixed(1) + "%"; }
+
+function renderResults(payload) {
+  const items = payload.items || [];
+  const lowList = items.filter(it => it.score != null && it.score < LOW_SCORE);
+
+  // 顶部统计
+  statCount.textContent = items.length;
+  statAvg.textContent = payload.avg_score != null ? (payload.avg_score * 100).toFixed(1) + "%" : "—";
+  statTime.textContent = payload.elapsed_ms != null ? Math.round(payload.elapsed_ms) : "—";
+  statLow.textContent = lowList.length;
+  engineTag.textContent = payload.engine ? `引擎 ${payload.engine}` : "";
+
+  // 低置信度警示条
+  if (lowList.length > 0) {
+    const names = lowList.map((it, i) => `「${it.text || "(空)"}」`).slice(0, 6).join("、");
+    alertLow.style.display = "block";
+    alertLow.innerHTML = `⚠️ 发现 <b>${lowList.length}</b> 行低置信度结果（<${LOW_SCORE * 100}%）：` +
+      `${names}${lowList.length > 6 ? " 等" : ""}。请对照原图人工复核，必要时在画板上重新书写。`;
+  } else {
+    alertLow.style.display = "none";
+  }
+
+  // 结果列表
+  resultsEl.innerHTML = "";
+  if (items.length === 0) {
+    emptyBox.style.display = "block";
+    return;
+  }
+  emptyBox.style.display = "none";
+
+  items.forEach((it, i) => {
+    const cls = scoreClass(it.score);
+    const row = document.createElement("div");
+    row.className = `item ${cls}`;
+    row.title = "点击单个文本可复制";
+
+    const idx = document.createElement("div");
+    idx.className = "idx"; idx.textContent = i + 1;
+
+    const mid = document.createElement("div");
+    mid.style.flex = "1";
+
+    const txt = document.createElement("div");
+    txt.className = "txt";
+    txt.textContent = it.text || "(空)";
+    txt.title = it.text;
+    mid.appendChild(txt);
+
+    // 第二行：坐标等辅助信息（审计留痕用）
+    if (Array.isArray(it.box) && it.box.length === 4) {
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const x1 = Math.round(it.box[0][0]), y1 = Math.round(it.box[0][1]);
+      const x2 = Math.round(it.box[2][0]), y2 = Math.round(it.box[2][1]);
+      meta.textContent = `坐标 (${x1}, ${y1}) ~ (${x2}, ${y2})  ·  区域 ${(x2 - x1)}×${(y2 - y1)}px`;
+      mid.appendChild(meta);
+    }
+
+    const score = document.createElement("div");
+    score.className = `score ${cls}`;
+    score.textContent = scoreLabel(it.score);
+
+    const copy = document.createElement("button");
+    copy.className = "btn small ghost copy-btn";
+    copy.textContent = "复制";
+    copy.addEventListener("click", () => copyText(it.text));
+
+    row.append(idx, mid, score, copy);
+    resultsEl.appendChild(row);
+  });
+}
+
+function renderFailureList() {
+  statCount.textContent = "0";
+  statAvg.textContent = "—";
+  statTime.textContent = "—";
+  statLow.textContent = "0";
+  alertLow.style.display = "none";
+  resultsEl.innerHTML =
+    '<div class="empty"><div class="big">😵</div>本轮识别失败，请查看上方错误信息</div>';
+}
+
+/* ============================== 复制工具（兼容 file:// 环境） ============================== */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("已复制");
+  } catch (_) {
+    // 非安全上下文（file://）下 Clipboard API 不可用，退回文本域方式
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); toast("已复制"); }
+    catch (e) { toast("复制失败，请手动选择"); }
+    ta.remove();
+  }
+}
+function toast(msg) {
+  let t = $("toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    t.style.cssText = "position:fixed;left:50%;bottom:32px;transform:translateX(-50%);" +
+      "background:#22262c;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;" +
+      "box-shadow:0 4px 16px rgba(0,0,0,.25);z-index:999;opacity:0;transition:opacity .2s;";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = "1";
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.opacity = "0"; }, 1200);
+}
+
+$("btnCopyAll").addEventListener("click", async () => {
+  const rows = resultsEl.querySelectorAll(".item .txt");
+  const all = Array.from(rows).map(n => n.textContent).join("\n");
+  if (!all) { showError("当前没有可复制的识别结果。"); return; }
+  hideError();
+  copyText(all);
+});
+$("btnClearResults").addEventListener("click", () => {
+  clearOverlay();
+  resultsEl.innerHTML = "";
+  emptyBox.style.display = "block";
+  statCount.textContent = "0"; statAvg.textContent = "—";
+  statTime.textContent = "—"; statLow.textContent = "0";
+  alertLow.style.display = "none"; hideError();
+  engineTag.textContent = "";
+});
+
+/* ============================== 上传图片 ============================== */
+dropzone.addEventListener("click", (e) => {
+  if (e.target.closest("button")) return;      // 点按钮时不触发选文件
+  fileInput.click();
+});
+$("btnRechoose").addEventListener("click", () => fileInput.click());
+$("btnRemoveImg").addEventListener("click", () => {
+  fileInput.value = "";
+  dropzone.classList.remove("has-image");
+  previewImg.removeAttribute("src");
+  fileMeta.textContent = "";
+  hideError();
+});
+
+["dragenter", "dragover"].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.add("drag"); })
+);
+["dragleave", "drop"].forEach(ev =>
+  dropzone.addEventListener(ev, (e) => { e.preventDefault(); dropzone.classList.remove("drag"); })
+);
+dropzone.addEventListener("drop", (e) => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener("change", () => {
+  if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+});
+
+async function handleFile(file) {
+  hideError();
+  if (!file.type.startsWith("image/")) {
+    showError(`「${file.name}」不是图片文件（类型：${file.type || "未知"}），请选择图片后再试。`);
+    return;
+  }
+  if (file.size > MAX_SIZE) {
+    showError(`「${file.name}」大小 ${(file.size / 1024 / 1024).toFixed(1)}MB，超过 20MB 上限，请压缩后重试。`);
+    return;
+  }
+  // 本地预览
+  previewImg.src = URL.createObjectURL(file);
+  fileMeta.textContent = `${file.name}  ·  ${(file.size / 1024).toFixed(0)} KB`;
+  dropzone.classList.add("has-image");
+  // 提交识别
+  await sendFile(file);
+}
+
+async function sendFile(file) {
+  const btn = $("btnRechoose");
+  setLoading(btn, true);
+  try {
+    const fd = new FormData();
+    fd.append("file", file, file.name);
+    const res = await fetch(`${API_BASE}/api/ocr-file`, { method: "POST", body: fd });
+    const payload = await readResponse(res);
+    clearOverlay();               // 文件识别结果与画板检测框无关，清掉上一轮画板叠加框
+    renderResults(payload);
+  } catch (err) {
+    showError(`图片识别失败：${err.message}`);
+    renderFailureList();
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+/* ============================== 手写画板 ============================== */
+// 逻辑尺寸（坐标空间）固定为 640x400，导出图与坐标框保持一致；显示用 DPR 缩放保证清晰
+const PAD_W = 640, PAD_H = 400;
+const ctx = canvasEl.getContext("2d");
+const dpr = Math.max(1, window.devicePixelRatio || 1);
+let strokes = [];        // [{points:[[x,y],...]}]  落笔轨迹（逻辑坐标）
+let overlayItems = null; // 最近一次识别结果，用于画检测框
+
+function resizeCanvas() {
+  canvasEl.width = Math.round(PAD_W * dpr);
+  canvasEl.height = Math.round(PAD_H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  redraw();
+}
+function replayStrokes(targetCtx, scale) {
+  for (const s of strokes) {
+    targetCtx.beginPath();
+    s.points.forEach((p, i) => {
+      const x = p[0] * scale, y = p[1] * scale;
+      i === 0 ? targetCtx.moveTo(x, y) : targetCtx.lineTo(x, y);
+    });
+    targetCtx.strokeStyle = "#1a1a1a";
+    targetCtx.lineWidth = 4 * scale;
+    targetCtx.lineCap = "round";
+    targetCtx.lineJoin = "round";
+    targetCtx.stroke();
+  }
+}
+function redraw() {
+  ctx.fillStyle = "#ffffff";                  // 白底：透明画布会被后端合成黑底，必须显式白底
+  ctx.fillRect(0, 0, PAD_W, PAD_H);
+  replayStrokes(ctx, 1);
+  if (overlayItems) drawOverlay(overlayItems);
+}
+
+// 在画布上叠加识别出的文本框（按置信度着色）
+function drawOverlay(items) {
+  ctx.save();
+  ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+  for (const it of items) {
+    if (!Array.isArray(it.box) || it.box.length < 4) continue;
+    const c = scoreClass(it.score);
+    ctx.strokeStyle = c === "good" ? "#2f9e63" : c === "warn" ? "#e6a23c" : "#e03131";
+    ctx.beginPath();
+    it.box.forEach((pt, i) => {
+      i === 0 ? ctx.moveTo(pt[0], pt[1]) : ctx.lineTo(pt[0], pt[1]);
+    });
+    ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function clearOverlay() { overlayItems = null; redraw(); }
+
+// 指针事件：同时兼容鼠标与触控笔（Pointer Events），触摸时防止页面滚动
+let drawing = false;
+function pointerPos(e) {
+  const r = canvasEl.getBoundingClientRect();
+  const scaleX = PAD_W / r.width;   // 显示尺寸 → 逻辑坐标的换算
+  const scaleY = PAD_H / r.height;
+  return [(e.clientX - r.left) * scaleX, (e.clientY - r.top) * scaleY];
+}
+canvasEl.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  canvasEl.setPointerCapture(e.pointerId);
+  drawing = true;
+  const p = pointerPos(e);
+  strokes.push({ points: [p] });    // 新一笔
+  clearOverlay();                    // 已有一笔新内容，检测框失去意义
+  ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+  strokeCountEl.textContent = strokes.length;
+});
+canvasEl.addEventListener("pointermove", (e) => {
+  if (!drawing) return;
+  e.preventDefault();
+  const p = pointerPos(e);
+  const s = strokes[strokes.length - 1];
+  s.points.push(p);
+  ctx.strokeStyle = "#1a1a1a";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.lineTo(p[0], p[1]);
+  ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+});
+function endStroke(e) {
+  if (!drawing) return;
+  drawing = false;
+  try { canvasEl.releasePointerCapture(e.pointerId); } catch (_) {}
+}
+canvasEl.addEventListener("pointerup", endStroke);
+canvasEl.addEventListener("pointercancel", endStroke);
+canvasEl.addEventListener("pointerleave", endStroke);
+
+$("btnClearPad").addEventListener("click", () => {
+  strokes = [];
+  strokeCountEl.textContent = "0";
+  overlayItems = null;
+  redraw();
+  hideError();
+});
+
+$("btnSubmitPad").addEventListener("click", async () => {
+  hideError();
+  if (strokes.length === 0) {
+    showError("画板是空的，请先用鼠标/手指书写文字再提交。");
+    return;
+  }
+  setLoading($("btnSubmitPad"), true);
+  try {
+    // 导出：用 640x400 的离屏画布重新渲染白底 + 笔迹，避免 DPR 缩放带来的坐标漂移
+    const tmp = document.createElement("canvas");
+    tmp.width = PAD_W; tmp.height = PAD_H;
+    const tctx = tmp.getContext("2d");
+    tctx.fillStyle = "#ffffff";
+    tctx.fillRect(0, 0, PAD_W, PAD_H);
+    replayStrokes(tctx, 1);
+    const dataUrl = tmp.toDataURL("image/png");
+
+    const res = await fetch(`${API_BASE}/api/ocr-canvas`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_base64: dataUrl }),
+    });
+    const payload = await readResponse(res);
+
+    overlayItems = payload.items || [];   // 在画布上叠加检测框
+    redraw();
+    renderResults(payload);
+  } catch (err) {
+    showError(`画板识别失败：${err.message}`);
+    renderFailureList();
+  } finally {
+    setLoading($("btnSubmitPad"), false);
+  }
+});
+
+resizeCanvas();
+window.addEventListener("resize", resizeCanvas);
+
+/* ============================== 易混淆字参考（审计视角推荐测试样例） ============================== */
+const sampleChips = [
+  "沭阳", "沐阳", "已已", "己己", "未末", "采彩", "侯候", "日曰", "人入", "具俱", "市币", "令今"
+];
+sampleChips.forEach((s) => {
+  const c = document.createElement("span");
+  c.className = "chip";
+  c.textContent = s;
+  samplesEl.appendChild(c);
+});
+
+</script>
+</body>
+</html>
