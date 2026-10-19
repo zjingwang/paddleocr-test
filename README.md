@@ -52,6 +52,12 @@ pip install -r requirements.txt
 python app.py
 ```
 
+> **Linux / macOS 也可以直接用一键脚本**（推荐，能自动复用项目内模型缓存、避免重复下载）：
+> ```bash
+> ./start.sh           # 等价于 python app.py，默认 8000 端口
+> ./start.sh 9000      # 指定端口 9000
+> ```
+
 看到类似下面的提示就说明成功了（默认监听 8000 端口）：
 
 ```
