@@ -49,7 +49,7 @@ import traceback
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image
 
 # ------------------------------------------------------------------------------
@@ -409,6 +409,18 @@ def _build_response(success: bool, **extra) -> dict:
 # API 接口
 # ------------------------------------------------------------------------------
 
+# 根路径直接返回前端页面：浏览器访问 http://127.0.0.1:8000 即可打开测试台，
+# 无需手动去文件管理器里找 index.html。同时保留“双击 index.html”的 file:// 方式。
+# 路径用 __file__ 解析，保证从任何目录启动都定位到本文件旁的 index.html。
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """返回前端单页应用。"""
+    return FileResponse(os.path.join(_BASE_DIR, "index.html"))
+
+
 @app.get("/api/health")
 def api_health():
     """探活接口：不加载模型，仅报告服务与依赖就绪状态，供前端页面加载时探测后端地址。"""
@@ -527,8 +539,8 @@ if __name__ == "__main__":
 
     print("=" * 64)
     print("  PaddleOCR 识别准确率测试后端已启动")
-    print(f"  请在浏览器打开前端页面 index.html（双击即可）")
-    print(f"  前端默认请求后端地址: http://127.0.0.1:{args.port}")
+    print(f"  👉 请用浏览器访问:  http://127.0.0.1:{args.port}")
+    print(f"     （后端已自动托管前端页面，打开即用；也可直接双击 index.html）")
     print(f"  接口: POST /api/ocr-file | POST /api/ocr-canvas | GET /api/health")
     print("=" * 64)
     uvicorn.run(app, host=args.host, port=args.port)

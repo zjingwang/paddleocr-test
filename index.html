@@ -118,13 +118,16 @@
   .pad-hint { font-size: 12px; color: #7a828e; margin-top: 10px; }
   .pad-hint .hl { color: #d6336c; font-weight: 700; }
 
-  /* 易混淆字参考 chips */
+  /* 易混淆字参考 chips（可点击，一键写入画板） */
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .chip {
-    font-size: 12px; padding: 3px 9px; border-radius: 999px;
+    font-size: 15px; font-weight: 700; letter-spacing: 2px;
+    padding: 5px 12px; border-radius: 8px; cursor: pointer;
     background: #eef3ff; color: #1f4e8c; border: 1px solid #d5e2fb;
+    transition: all .12s; user-select: none;
   }
-  .chip.warn { background: #fff4e5; color: #b26a00; border-color: #ffe0b0; }
+  .chip:hover { background: #dde9ff; border-color: #1f6feb; transform: translateY(-1px); }
+  .chip:active { transform: translateY(0); }
 
   /* ============================== 结果区 ============================== */
   #results { max-height: 62vh; overflow-y: auto; padding: 6px 18px 18px; }
@@ -247,11 +250,11 @@
           <button class="btn primary" id="btnSubmitPad">识别画板文字</button>
           <button class="btn danger" id="btnClearPad">清空画板</button>
           <span class="sep"></span>
-          <span class="muted" style="font-size:12px">已落笔 <b id="strokeCount">0</b> 笔</span>
+          <span class="muted" style="font-size:12px">已落笔 <b id="strokeCount">0</b> 笔 · 样例字 <b id="glyphCount">0</b> 个</span>
         </div>
         <div class="pad-hint">
           建议<code>一笔一画、字距适中</code>地书写，天然的连笔字、形近字可放心测试——这是本页的核心目的。
-          <span class="hl">推荐先写：</span>
+          <span class="hl">懒得手写？点下面的样例字，一键写到画板上再识别：</span>
         </div>
         <div class="chips" id="samples"></div>
       </div>
@@ -295,19 +298,19 @@
 </main>
 
 <footer>
-  使用说明：先启动后端 <span class="kbd">python app.py</span>（默认 8000 端口），再双击本文件即可使用。
-  若后端端口不同，请修改本文件顶部 <span class="kbd">API_BASE</span> 常量后刷新。
-  PaddleOCR 首次运行会自动加载模型；断网机器请先用 <span class="kbd">python app.py --warmup</span> 预下载模型。
+  使用说明：启动后端后，直接用浏览器访问 <span class="kbd">http://127.0.0.1:8000</span> 即可打开本页（推荐）；
+  也可以直接双击本文件（file://）使用。若后端端口不是 8000，请修改本文件顶部
+  <span class="kbd">API_BASE</span> 常量后刷新。断网机器请先用 <span class="kbd">python app.py --warmup</span> 预下载模型。
 </footer>
 
 <script>
 "use strict";
 
 /* ============================== 全局配置 ============================== */
-// 后端地址：file:// 协议下默认请求本机 8000 端口；若改成静态服务器托管，则自动走同源
-const API_BASE = (location.protocol === "file:" || location.protocol === "http:")
-  ? "http://127.0.0.1:8000"
-  : "";
+// 后端地址：
+//   · 页面由后端托管（浏览器访问 http://127.0.0.1:8000）时 → 走同源请求，无需跨域；
+//   · 直接双击本地 index.html（file:// 协议）时 → 回退到默认后端 127.0.0.1:8000。
+const API_BASE = location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 const MAX_SIZE = 20 * 1024 * 1024;   // 与后端一致：20MB
 
 /* 低置信度阈值：低于此值的识别结果标红提示人工复核 */
@@ -322,6 +325,7 @@ const fileMeta        = $("fileMeta");
 const canvasEl        = $("pad");
 const canvasWrap      = $("canvasWrap");
 const strokeCountEl   = $("strokeCount");
+const glyphCountEl    = $("glyphCount");
 const resultsEl       = $("results");
 const emptyBox        = $("emptyBox");
 const errorBanner     = $("errorBanner");
@@ -596,6 +600,7 @@ const PAD_W = 640, PAD_H = 400;
 const ctx = canvasEl.getContext("2d");
 const dpr = Math.max(1, window.devicePixelRatio || 1);
 let strokes = [];        // [{points:[[x,y],...]}]  落笔轨迹（逻辑坐标）
+let glyphs = [];         // [{text,x,y,font,color,rotate}] 点击样例字写入的文本（x,y 为逻辑坐标，y 为基线）
 let overlayItems = null; // 最近一次识别结果，用于画检测框
 
 function resizeCanvas() {
@@ -622,7 +627,57 @@ function redraw() {
   ctx.fillStyle = "#ffffff";                  // 白底：透明画布会被后端合成黑底，必须显式白底
   ctx.fillRect(0, 0, PAD_W, PAD_H);
   replayStrokes(ctx, 1);
+  renderGlyphs(ctx, 1);
   if (overlayItems) drawOverlay(overlayItems);
+}
+
+// 渲染“样例字”（fillText），可带轻微旋转，视觉上更接近手写
+function renderGlyphs(targetCtx, scale) {
+  for (const g of glyphs) {
+    targetCtx.save();
+    targetCtx.translate(g.x * scale, g.y * scale);
+    if (g.rotate) targetCtx.rotate((g.rotate * Math.PI) / 180);
+    targetCtx.font = g.font;
+    targetCtx.fillStyle = g.color;
+    targetCtx.textBaseline = "alphabetic";
+    targetCtx.textAlign = "left";
+    targetCtx.fillText(g.text, 0, 0);
+    targetCtx.restore();
+  }
+}
+
+// 点击样例字 → 按从左到右、到边界换行的顺序写入画板；写满时自动清空重排
+function addSampleGlyph(text) {
+  const margin = 34;
+  const size = 92;
+  const font = `${size}px "Kaiti SC","KaiTi","STKaiti","楷体","FangSong","仿宋",serif`;
+  const spacing = size * 0.95;
+  let x = margin;
+  let y = margin + size;                     // 第一行文字的基线
+  const last = glyphs[glyphs.length - 1];
+  if (last) {
+    x = last.x + spacing;
+    y = last.y;
+    if (x + size > PAD_W - margin) {          // 超出右边界 → 换行
+      x = margin;
+      y += size + 26;
+    }
+  }
+  if (y > PAD_H - 6) {                        // 画板已写满 → 自动清空后重新排布
+    glyphs = [];
+    strokes = [];
+    toast("画板已写满，已自动清空后重新排列");
+    x = margin;
+    y = margin + size;
+  }
+  // 轻微旋转（-0.9° / 0° / 0.9° 随机错落），更像人手书写
+  const rotate = ((glyphs.length % 3) - 1) * 0.9;
+  glyphs.push({ text, x, y, font, color: "#1a1a1a", rotate });
+  overlayItems = null;                        // 内容变了，旧的检测框作废
+  redraw();
+  strokeCountEl.textContent = strokes.length;
+  glyphCountEl.textContent = glyphs.length;
+  hideError();
 }
 
 // 在画布上叠加识别出的文本框（按置信度着色）
@@ -686,7 +741,9 @@ canvasEl.addEventListener("pointerleave", endStroke);
 
 $("btnClearPad").addEventListener("click", () => {
   strokes = [];
+  glyphs = [];
   strokeCountEl.textContent = "0";
+  glyphCountEl.textContent = "0";
   overlayItems = null;
   redraw();
   hideError();
@@ -694,19 +751,20 @@ $("btnClearPad").addEventListener("click", () => {
 
 $("btnSubmitPad").addEventListener("click", async () => {
   hideError();
-  if (strokes.length === 0) {
-    showError("画板是空的，请先用鼠标/手指书写文字再提交。");
+  if (strokes.length === 0 && glyphs.length === 0) {
+    showError("画板是空的，请用鼠标/手指书写文字，或点击下方样例字后提交。");
     return;
   }
   setLoading($("btnSubmitPad"), true);
   try {
-    // 导出：用 640x400 的离屏画布重新渲染白底 + 笔迹，避免 DPR 缩放带来的坐标漂移
+    // 导出：用 640x400 的离屏画布重新渲染白底 + 笔迹 + 样例字，避免 DPR 缩放带来的坐标漂移
     const tmp = document.createElement("canvas");
     tmp.width = PAD_W; tmp.height = PAD_H;
     const tctx = tmp.getContext("2d");
     tctx.fillStyle = "#ffffff";
     tctx.fillRect(0, 0, PAD_W, PAD_H);
     replayStrokes(tctx, 1);
+    renderGlyphs(tctx, 1);
     const dataUrl = tmp.toDataURL("image/png");
 
     const res = await fetch(`${API_BASE}/api/ocr-canvas`, {
@@ -730,14 +788,17 @@ $("btnSubmitPad").addEventListener("click", async () => {
 resizeCanvas();
 window.addEventListener("resize", resizeCanvas);
 
-/* ============================== 易混淆字参考（审计视角推荐测试样例） ============================== */
+/* ============================== 易混淆字参考（点击即可写入画板） ============================== */
 const sampleChips = [
   "沭阳", "沐阳", "已已", "己己", "未末", "采彩", "侯候", "日曰", "人入", "具俱", "市币", "令今"
 ];
 sampleChips.forEach((s) => {
-  const c = document.createElement("span");
+  const c = document.createElement("button");
+  c.type = "button";
   c.className = "chip";
   c.textContent = s;
+  c.title = `点击把「${s}」写入画板，再点“识别画板文字”`;
+  c.addEventListener("click", () => addSampleGlyph(s));
   samplesEl.appendChild(c);
 });
 
